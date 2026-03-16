@@ -66,7 +66,7 @@ dependencies {
 
     // USB UVC camera support (Logitech Rally uses USB Video Class)
     // AndroidUSBCamera by saki4510t — wraps libuvc via JNI
-    implementation 'com.github.jiangdongguo:AndroidUSBCamera:3.3.3'
+    implementation 'com.github.jiangdongguo:AndroidUSBCamera:3.3.0'
 
     // Coroutines
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
