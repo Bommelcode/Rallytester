@@ -10,14 +10,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // UVC camera library
         maven { url 'https://jitpack.io' }
     }
 }
 rootProject.name = "RallyTester"
 include ':app'
-repositories {
-    google()
-    mavenCentral()
-    maven { url 'https://jitpack.io' }
-}
