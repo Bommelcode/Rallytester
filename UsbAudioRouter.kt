@@ -1,0 +1,73 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.example.rallytester'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.example.rallytester"
+        minSdk 34
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+        // Required for UVC native lib
+        ndk {
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            debuggable true
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildFeatures {
+        viewBinding true
+    }
+
+    packaging {
+        jniLibs {
+            // Allow merging native libs from UVC library
+            pickFirsts += ['**/*.so']
+        }
+    }
+}
+
+dependencies {
+    // Core
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+
+    // CameraX (for fallback / internal camera)
+    implementation 'androidx.camera:camera-core:1.3.2'
+    implementation 'androidx.camera:camera-camera2:1.3.2'
+    implementation 'androidx.camera:camera-lifecycle:1.3.2'
+    implementation 'androidx.camera:camera-view:1.3.2'
+
+    // USB UVC camera support (Logitech Rally uses USB Video Class)
+    // AndroidUSBCamera by saki4510t — wraps libuvc via JNI
+    implementation 'com.github.jiangdongguo:AndroidUSBCamera:3.3.3'
+
+    // Coroutines
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+}
