@@ -12,33 +12,18 @@ import kotlin.math.PI
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/**
- * Streams a continuous sine wave to the USB speaker (Logitech Rally).
- *
- * @param router UsbAudioRouter to steer output to the Rally speaker
- */
 class ToneGenerator(private val router: UsbAudioRouter) {
 
     private var track: AudioTrack? = null
     private var job: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO)
-
     var isPlaying = false
         private set
 
-    companion object {
-        private const val SAMPLE_RATE = 48_000
-        private const val AMPLITUDE   = 0.65f
-    }
-
-    /**
-     * Start playing [frequencyHz] and report RMS output level via [onLevel].
-     */
     fun play(frequencyHz: Double = 1_000.0, onLevel: (Float) -> Unit = {}) {
         stop()
-
-        val minBuf = AudioTrack.getMinBufferSize(
-            SAMPLE_RATE,
+        val bufSize = AudioTrack.getMinBufferSize(
+            48_000,
             AudioFormat.CHANNEL_OUT_STEREO,
             AudioFormat.ENCODING_PCM_FLOAT
         ).coerceAtLeast(2048)
@@ -53,33 +38,29 @@ class ToneGenerator(private val router: UsbAudioRouter) {
             .setAudioFormat(
                 AudioFormat.Builder()
                     .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                    .setSampleRate(SAMPLE_RATE)
+                    .setSampleRate(48_000)
                     .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
                     .build()
             )
-            .setBufferSizeInBytes(minBuf * 4)
+            .setBufferSizeInBytes(bufSize * 4)
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
 
-        // Route to Rally USB speaker
         val usbDev = router.findRallyAudio()
         router.routeOutput(t, usbDev)
-
         t.play()
         track = t
         isPlaying = true
 
         job = scope.launch {
-            val buf = FloatArray(minBuf)
+            val buf = FloatArray(bufSize)
             var phase = 0.0
-            val dPhase = 2.0 * PI * frequencyHz / SAMPLE_RATE
-
+            val dPhase = 2.0 * PI * frequencyHz / 48_000
             while (isActive) {
                 var rmsSum = 0.0
                 for (i in buf.indices step 2) {
-                    val s = (sin(phase) * AMPLITUDE).toFloat()
-                    buf[i]     = s
-                    buf[i + 1] = s
+                    val s = (sin(phase) * 0.65f).toFloat()
+                    buf[i] = s; buf[i + 1] = s
                     rmsSum += s * s
                     phase += dPhase
                     if (phase > 2.0 * PI) phase -= 2.0 * PI

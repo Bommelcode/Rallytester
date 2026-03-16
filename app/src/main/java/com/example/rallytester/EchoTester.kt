@@ -10,70 +10,51 @@ import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
+import kotlin.math.sqrt
 
-/**
- * Loopback echo test:
- *  1. Arms recorder first (so no audio is missed)
- *  2. Plays a 200ms 1kHz sine burst through the USB speaker
- *  3. Records for 2s total
- *  4. Finds the first sample above [THRESHOLD] that arrives AFTER
- *     the burst has finished playing
- *  5. Returns latency in ms, or "niet gedetecteerd"
- *
- * @param router UsbAudioRouter for explicit USB device selection
- */
 class EchoTester(private val router: UsbAudioRouter) {
 
     companion object {
-        private const val SAMPLE_RATE     = 48_000
-        private const val BURST_MS        = 200
-        private const val LISTEN_MS       = 2_000
-        private const val TONE_FREQ       = 1_000.0
-        private const val THRESHOLD       = 0.06f   // RMS threshold for echo detection
-        private const val WINDOW_SAMPLES  = 256     // RMS window
+        private const val SAMPLE_RATE    = 48_000
+        private const val BURST_MS       = 200
+        private const val LISTEN_MS      = 2_000
+        private const val TONE_FREQ      = 1_000.0
+        private const val THRESHOLD      = 0.06f
+        private const val WINDOW         = 256
     }
 
-    data class EchoResult(
-        val detected: Boolean,
-        val latencyMs: Int,
-        val message: String
-    )
+    data class EchoResult(val detected: Boolean, val latencyMs: Int, val message: String)
 
     suspend fun run(): EchoResult = withContext(Dispatchers.IO) {
-
         val burstSamples  = SAMPLE_RATE * BURST_MS  / 1000
         val listenSamples = SAMPLE_RATE * LISTEN_MS / 1000
 
-        // ── Build stereo burst buffer ────────────────────────────────────────
+        // Build burst
         val burstBuf = FloatArray(burstSamples * 2)
         for (i in 0 until burstSamples) {
-            // Apply 5ms fade-in and fade-out to avoid clicks
             val env = when {
-                i < SAMPLE_RATE * 0.005 -> i.toFloat() / (SAMPLE_RATE * 0.005f)
-                i > burstSamples - SAMPLE_RATE * 0.005 ->
-                    (burstSamples - i).toFloat() / (SAMPLE_RATE * 0.005f)
+                i < SAMPLE_RATE * 0.005  -> i / (SAMPLE_RATE * 0.005f)
+                i > burstSamples - SAMPLE_RATE * 0.005 -> (burstSamples - i) / (SAMPLE_RATE * 0.005f)
                 else -> 1f
             }
             val s = (sin(2.0 * PI * TONE_FREQ * i / SAMPLE_RATE) * 0.75 * env).toFloat()
-            burstBuf[i * 2]     = s
-            burstBuf[i * 2 + 1] = s
+            burstBuf[i * 2] = s; burstBuf[i * 2 + 1] = s
         }
 
-        // ── Set up recorder (arm BEFORE playing so we capture the burst) ────
-        val recMinBuf = AudioRecord.getMinBufferSize(
+        // Arm recorder first
+        val recBufSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT
         ).coerceAtLeast(4096)
 
         val recorder = AudioRecord(
             MediaRecorder.AudioSource.MIC, SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT,
-            recMinBuf * 4
+            recBufSize * 4
         )
-        val usbDev = router.findRallyAudio()
-        router.routeInput(recorder, usbDev)
+        router.routeInput(recorder, router.findRallyAudio())
         recorder.startRecording()
 
-        // ── Set up AudioTrack (static mode for precise timing) ──────────────
+        // Setup playback
         val track = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -92,45 +73,37 @@ class EchoTester(private val router: UsbAudioRouter) {
             .setTransferMode(AudioTrack.MODE_STATIC)
             .build()
 
-        router.routeOutput(track, usbDev)
+        router.routeOutput(track, router.findRallyAudio())
         track.write(burstBuf, 0, burstBuf.size, AudioTrack.WRITE_BLOCKING)
-
-        // ── Play & record simultaneously ─────────────────────────────────────
         track.play()
-        val captureBuffer = FloatArray(listenSamples)
-        var totalRead = 0
-        val readBuf = FloatArray(recMinBuf)
 
+        // Capture
+        val capBuf = FloatArray(listenSamples)
+        var totalRead = 0
+        val readBuf = FloatArray(recBufSize)
         while (totalRead < listenSamples) {
-            val toRead = minOf(recMinBuf, listenSamples - totalRead)
-            val n = recorder.read(readBuf, 0, toRead, AudioRecord.READ_BLOCKING)
-            if (n > 0) {
-                readBuf.copyInto(captureBuffer, totalRead, 0, n)
-                totalRead += n
-            }
+            val n = recorder.read(readBuf, 0, minOf(recBufSize, listenSamples - totalRead), AudioRecord.READ_BLOCKING)
+            if (n > 0) { readBuf.copyInto(capBuf, totalRead, 0, n); totalRead += n }
         }
 
         track.stop(); track.release()
         recorder.stop(); recorder.release()
 
-        // ── Find echo: look for RMS spike AFTER the burst ───────────────────
-        // The burst occupies the first ~burstSamples of the capture.
-        // We search from burstSamples onward with a rolling RMS window.
+        // Find echo after burst
         var echoSample = -1
         var i = burstSamples
-        while (i + WINDOW_SAMPLES < totalRead) {
+        while (i + WINDOW < totalRead) {
             var rms = 0.0
-            for (j in i until i + WINDOW_SAMPLES) rms += captureBuffer[j].toDouble() * captureBuffer[j]
-            rms = kotlin.math.sqrt(rms / WINDOW_SAMPLES)
-            if (rms > THRESHOLD) { echoSample = i; break }
-            i += WINDOW_SAMPLES / 2   // 50% overlap
+            for (j in i until i + WINDOW) rms += capBuf[j].toDouble() * capBuf[j]
+            if (sqrt(rms / WINDOW) > THRESHOLD) { echoSample = i; break }
+            i += WINDOW / 2
         }
 
-        return@withContext if (echoSample >= 0) {
-            val latencyMs = echoSample * 1000 / SAMPLE_RATE
-            EchoResult(true, latencyMs, "✅ Echo gedetecteerd  —  latentie ≈ ${latencyMs} ms")
+        if (echoSample >= 0) {
+            val ms = echoSample * 1000 / SAMPLE_RATE
+            EchoResult(true, ms, "✅ Echo gedetecteerd — latentie ≈ ${ms} ms")
         } else {
-            EchoResult(false, -1, "❌ Geen echo gedetecteerd — zet volume omhoog of controleer mic")
+            EchoResult(false, -1, "❌ Geen echo — controleer speaker & mic")
         }
     }
 }

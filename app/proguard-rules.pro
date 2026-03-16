@@ -1,2 +1,1 @@
--keep class com.jiangdg.ausbc.** { *; }
 -keep class com.example.rallytester.** { *; }
